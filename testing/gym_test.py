@@ -31,10 +31,32 @@ class DQL():
         with torch.no_grad():
             return self.model(torch.Tensor(state))
 
+    def replay(self, memory, size, gamma=0.9):
+        """ Add experience replay to the DQN network class. """
+        # Make sure the memory is big enough
+        if len(memory) >= size:
+            states = []
+            targets = []
+            # Sample a batch of experiences from the agent's memory
+            batch = random.sample(memory, size)
 
-def q_learning(env, model, episodes, num_past_states, gamma=0.9,
+            # Extract information from the data
+            for state, action, next_state, reward, done in batch:
+                states.append(state)
+                # Predict q_values
+                q_values = self.predict(state).tolist()
+                if done:
+                    q_values[action] = reward
+                else:
+                    q_values_next = self.predict(next_state)
+                    q_values[action] = reward + gamma * torch.max(q_values_next).item()
+                targets.append(q_values)
+            self.update(states, targets)
+
+def q_learning(env, model, episodes, num_past_states, replay, gamma=0.9,
                epsilon=0.3, eps_decay=0.99):
     final = []
+    memory = []
     for episode in range(episodes):
         print(episode)
 
@@ -51,7 +73,6 @@ def q_learning(env, model, episodes, num_past_states, gamma=0.9,
         total = 0
         while not done:
             curr_last_n_states = list(chain.from_iterable(last_n_states))
-            print(last_n_states)
             # Choosing random action with probability epsilon (epsilon greedy)
             if random.random() < epsilon:
                 action = env.action_space.sample()
@@ -64,14 +85,21 @@ def q_learning(env, model, episodes, num_past_states, gamma=0.9,
 
             total += reward
 
+            last_n_states.pop()
+            last_n_states.insert(0, next_state)
+            memory.append((curr_last_n_states, action,
+                    list(chain.from_iterable(last_n_states)), reward, done))
+
             q_values = model.predict(curr_last_n_states).tolist()
 
             if done:
-                q_values[action] = reward
-                model.update(curr_last_n_states, q_values)
+                if not replay:
+                    q_values[action] = reward
+                    model.update(curr_last_n_states, q_values)
+                    break
+                else:
+                    model.replay(memory, 20)
             else:
-                last_n_states.pop()
-                last_n_states.insert(0, next_state)
                 q_values_next = model.predict(list(chain.from_iterable(last_n_states)))
                 q_values[action] = reward + gamma * torch.max(q_values_next).item()
                 model.update(curr_last_n_states, q_values)
@@ -79,7 +107,6 @@ def q_learning(env, model, episodes, num_past_states, gamma=0.9,
         epsilon = max(epsilon * eps_decay, 0.01)
         final.append(total)
     return final
-
 
 env = gym.envs.make("CartPole-v1")
 
@@ -101,7 +128,7 @@ n_hidden = 50
 lr = 0.001
 
 simple_dqn = DQL(n_state, n_hidden, n_action, lr)
-simple = q_learning(env, simple_dqn, episodes, n_past_states,
+simple = q_learning(env, simple_dqn, episodes, n_past_states, False,
                 gamma=.9, epsilon=0.3)
 
 plt.figure()

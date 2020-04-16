@@ -17,7 +17,7 @@ class DQL():
                         torch.nn.ReLU(),
                         torch.nn.Linear(hidden_dim*2, action_dim)
                 )
-        self.criterion = torch.nn.SmoothL1Loss()
+        self.criterion = torch.nn.MSELoss()
         self.optimizer = torch.optim.RMSprop(self.model.parameters(), lr)
 
     def update(self, state, y):
@@ -32,18 +32,15 @@ class DQL():
             return self.model(torch.Tensor(state))
 
     def replay(self, memory, size, gamma=0.9):
-        """ Add experience replay to the DQN network class. """
-        # Make sure the memory is big enough
         if len(memory) >= size:
             states = []
             targets = []
-            # Sample a batch of experiences from the agent's memory
+
             batch = random.sample(memory, size)
 
-            # Extract information from the data
             for state, action, next_state, reward, done in batch:
                 states.append(state)
-                # Predict q_values
+
                 q_values = self.predict(state).tolist()
                 if done:
                     q_values[action] = reward
@@ -53,68 +50,57 @@ class DQL():
                 targets.append(q_values)
             self.update(states, targets)
 
-def q_learning(env, model, episodes, num_past_states, replay, gamma=0.9,
-               epsilon=0.3, eps_decay=0.99):
+
+def q_learning(env, model, episodes, gamma=0.9,
+               epsilon=0.3, eps_decay=0.99,
+               replay=False, replay_size=20):
     final = []
     memory = []
     for episode in range(episodes):
         print(episode)
 
-        last_n_states = []
-
         state = env.reset()
-        last_n_states.append(state)
-
-        # if there aren't enough past states, we pad them with zeros
-        while len(last_n_states) < num_past_states:
-            last_n_states.append([0 for i in range(len(last_n_states[0]))])
-
         done = False
         total = 0
+
         while not done:
-            curr_last_n_states = list(chain.from_iterable(last_n_states))
-            # Choosing random action with probability epsilon (epsilon greedy)
+            env.render()
             if random.random() < epsilon:
                 action = env.action_space.sample()
             else:
-                q_values = model.predict(curr_last_n_states)
+                q_values = model.predict(state)
                 action = torch.argmax(q_values).item()
 
             next_state, reward, done, _ = env.step(action)
-            env.render()
 
             total += reward
-
-            last_n_states.pop()
-            last_n_states.insert(0, next_state)
-            memory.append((curr_last_n_states, action,
-                    list(chain.from_iterable(last_n_states)), reward, done))
-
-            q_values = model.predict(curr_last_n_states).tolist()
+            memory.append((state, action, next_state, reward, done))
+            q_values = model.predict(state).tolist()
 
             if done:
                 if not replay:
                     q_values[action] = reward
-                    model.update(curr_last_n_states, q_values)
-                    break
-                else:
-                    model.replay(memory, 20)
+                    model.update(state, q_values)
+
+            if replay:
+                model.replay(memory, replay_size, gamma)
             else:
-                q_values_next = model.predict(list(chain.from_iterable(last_n_states)))
+                q_values_next = model.predict(next_state)
                 q_values[action] = reward + gamma * torch.max(q_values_next).item()
-                model.update(curr_last_n_states, q_values)
-            # state = next_state
+                model.update(state, q_values)
+
+            state = next_state
+
+        # Update epsilon
         epsilon = max(epsilon * eps_decay, 0.01)
         final.append(total)
     return final
 
+
 env = gym.envs.make("CartPole-v1")
 
-# Number of past states to input into our NN
-n_past_states = 1
-
 # Number of states
-n_state = env.observation_space.shape[0]*n_past_states
+n_state = env.observation_space.shape[0]
 
 # Number of actions
 n_action = env.action_space.n
@@ -124,12 +110,12 @@ episodes = 150
 
 # Number of hidden nodes in the DQN
 n_hidden = 50
+
 # Learning rate
 lr = 0.001
 
 simple_dqn = DQL(n_state, n_hidden, n_action, lr)
-simple = q_learning(env, simple_dqn, episodes, n_past_states, False,
-                gamma=.9, epsilon=0.3)
+simple = q_learning(env, simple_dqn, episodes, replay=True)
 
 plt.figure()
 plt.plot(range(episodes), simple)

@@ -29,7 +29,7 @@ class DQL():
                         torch.nn.ReLU(),
                         nn.Linear(100, 12)
                 )
-        self.criterion = torch.nn.SmoothL1Loss()
+        self.criterion = torch.nn.MSELoss()
         self.optimizer = torch.optim.RMSprop(self.model.parameters(), lr)
 
     def update(self, state, y):
@@ -43,7 +43,24 @@ class DQL():
         with torch.no_grad():
             return self.model(torch.Tensor(state))
 
+    def replay(self, memory, size, gamma=0.9):
+        if len(memory) >= size:
+            states = []
+            targets = []
 
+            batch = random.sample(memory, size)
+
+            for state, action, next_state, reward, done in batch:
+                states.append(state)
+
+                q_values = self.predict(state).tolist()
+                if done:
+                    q_values[action] = reward
+                else:
+                    q_values_next = self.predict(next_state)
+                    q_values[action] = reward + gamma * torch.max(q_values_next).item()
+                targets.append(q_values)
+            self.update(states, targets)
 
 # env = retro.make(game="Airstriker-Genesis")
 #
